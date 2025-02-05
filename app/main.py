@@ -1,4 +1,4 @@
-def menu(name):
+def menu():
     print("1. Search \n2. My Ingredients \n3. Favourites \n4. Settings \n5. Quit")
 
     try:
@@ -16,11 +16,11 @@ def menu(name):
                 pass
             case _:
                 print("Invalid input. Please enter a number between 1 and 5.")
-                menu(name)
+                menu()
     except ValueError:
         print("Invalid input. Please enter a number between 1 and 5.")
-        menu(name)
+        menu()
 
 
-if __name__ == 'main':
+if __name__ == '__main__':
     menu()
