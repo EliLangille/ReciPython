@@ -20,14 +20,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Create the pages
         self.menu_page = MenuPage(self)
+        self.search_page = SearchPage(self)
         self.settings_page = SettingsPage(self)
 
         # Add pages to stacked widget
         self.stacked_widget.addWidget(self.menu_page)
+        self.stacked_widget.addWidget(self.search_page)
         self.stacked_widget.addWidget(self.settings_page)
 
     def show_menu_page(self):
         self.stacked_widget.setCurrentWidget(self.menu_page)
+
+    def show_search_page(self):
+        self.stacked_widget.setCurrentWidget(self.search_page)
 
     def show_settings_page(self):
         self.stacked_widget.setCurrentWidget(self.settings_page)
@@ -53,7 +58,7 @@ class MenuPage(QtWidgets.QWidget):
         self.exit_button = QtWidgets.QPushButton("Exit")
 
         # Connect the buttons to the functions
-        self.search_button.clicked.connect(lambda: print(self.parent_window.api_key))  # Temp tester
+        self.search_button.clicked.connect(self.parent_window.show_search_page)
         self.settings_button.clicked.connect(self.parent_window.show_settings_page)
         self.exit_button.clicked.connect(QtWidgets.QApplication.instance().quit)
 
@@ -66,6 +71,48 @@ class MenuPage(QtWidgets.QWidget):
 
         # Set widget layout
         self.setLayout(layout)
+
+
+class SearchPage(QtWidgets.QWidget):
+    def __init__(self, parent_window):
+        super().__init__()
+
+        self.parent_window = parent_window
+
+        # Create layout
+        layout = QtWidgets.QVBoxLayout()
+
+        # Create back button
+        self.back_button = QtWidgets.QPushButton("Back")
+
+        # Create search bar and button
+        self.search_bar = QtWidgets.QLineEdit()
+        self.search_button = QtWidgets.QPushButton("Search")
+
+        # Connect buttons
+        self.back_button.clicked.connect(self.parent_window.show_menu_page)
+        self.search_button.clicked.connect(self.search_recipes)
+
+        # Temp label to display ingredients after search
+        self.ingredients_label = QtWidgets.QLabel("")
+
+        # Add widgets to layout
+        layout.addWidget(self.search_bar)
+        layout.addWidget(self.search_button)
+        layout.addWidget(self.ingredients_label)
+        layout.addWidget(self.back_button)
+
+        # Set layout
+        self.setLayout(layout)
+
+    def search_recipes(self):
+        # Get and clean ingredients list from search bar
+        print("searching")
+        ingredients = self.search_bar.text().split(',')
+        ingredients = [ingredient.strip() for ingredient in ingredients]
+
+        # Temp tester to display cleaned ingredients list
+        self.ingredients_label.setText(f"Ingredients entered: {', '.join(ingredients)}")
 
 
 class SettingsPage(QtWidgets.QWidget):
