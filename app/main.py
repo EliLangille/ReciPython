@@ -1,7 +1,11 @@
 import os
+import pprint
 import sys
+import threading
+import time
+import requests as req
 from dotenv import load_dotenv, set_key
-from PySide6 import QtWidgets
+from PySide6 import QtWidgets, QtCore
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -94,25 +98,76 @@ class SearchPage(QtWidgets.QWidget):
         self.search_button.clicked.connect(self.search_recipes)
 
         # Temp label to display ingredients after search
-        self.ingredients_label = QtWidgets.QLabel("")
+        self.results_label = QtWidgets.QLabel()
+        self.results_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
+        self.results_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.results_label.setOpenExternalLinks(True)
+        self.results_label.setText("")  # Initialize with empty content
 
         # Add widgets to layout
         layout.addWidget(self.search_bar)
         layout.addWidget(self.search_button)
-        layout.addWidget(self.ingredients_label)
+        layout.addWidget(self.results_label)
         layout.addWidget(self.back_button)
 
         # Set layout
         self.setLayout(layout)
 
     def search_recipes(self):
-        # Get and clean ingredients list from search bar
-        print("searching")
-        ingredients = self.search_bar.text().split(',')
-        ingredients = [ingredient.strip() for ingredient in ingredients]
+        # Clear the results label before updating it
+        self.results_label.setText("")
 
-        # Temp tester to display cleaned ingredients list
-        self.ingredients_label.setText(f"Ingredients entered: {', '.join(ingredients)}")
+        # Update results label to pending
+        self.results_label.setText("Searching...")
+
+        # Start a new thread to perform the API requests
+        threading.Thread(target=self.perform_search).start()
+
+    def perform_search(self):
+        # Get and clean ingredients list from search bar
+        ingredients = [ingredient.strip() for ingredient in self.search_bar.text().split(',')]
+        ingredients = ','.join(ingredients)
+
+        # Format API request
+        url = "https://spoonacular-recipe-food-nutrition-v1.p.rapidapi.com/recipes/findByIngredients"
+        querystring = {"ingredients": ingredients, "number": "5", "ignorePantry": "true", "ranking": "1"}
+        headers = {
+            "x-rapidapi-key": self.parent_window.api_key,
+            "x-rapidapi-host": "spoonacular-recipe-food-nutrition-v1.p.rapidapi.com"
+        }
+
+        # Make and get API request
+        response = req.request("GET", url, headers=headers, params=querystring)
+
+        if response.status_code == 200:
+            recipes = response.json()
+            recipe_names = [recipe['title'] for recipe in recipes]
+            recipe_ids = [recipe['id'] for recipe in recipes]
+
+            # Rate limit adherence
+            time.sleep(1)
+
+            # Get recipe links
+            recipe_links = []
+            for recipe_id in recipe_ids:
+                time.sleep(0.5)
+                recipe_info_url = (f"https://spoonacular-recipe-food-nutrition-v1.p.rapidapi.com"
+                                   f"/recipes/{recipe_id}/information")
+                recipe_info_response = req.request("GET", recipe_info_url, headers=headers)
+                if recipe_info_response.status_code == 200:
+                    recipe_info = recipe_info_response.json()
+                    recipe_links.append(recipe_info.get('sourceUrl', ''))
+
+            # Display recipe names and links
+            recipes_display = "<br>".join(
+                [f"<a href='{link}'>{name}</a>" if link else name for name, link in zip(recipe_names, recipe_links)]
+            )
+            self.update_results_label(f"Recipes found:<br>{recipes_display}")
+        else:
+            self.update_results_label("Error: Unable to retrieve recipes.")
+
+    def update_results_label(self, text):
+        self.results_label.setText(text)
 
 
 class SettingsPage(QtWidgets.QWidget):
