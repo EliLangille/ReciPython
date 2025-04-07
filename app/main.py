@@ -1,5 +1,4 @@
 import os
-import pprint
 import sys
 import threading
 import time
@@ -8,7 +7,94 @@ from dotenv import load_dotenv, set_key
 from PySide6 import QtWidgets, QtCore
 
 
+class FilterDropdown(QtWidgets.QPushButton):
+    def __init__(self, parent=None):
+        super().__init__("Filters", parent)
+        self.setMenu(QtWidgets.QMenu(self))
+
+        # Create QListWidget and add it to the QMenu
+        self.list_widget = QtWidgets.QListWidget()
+        self.list_widget.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.MultiSelection)
+        self.list_widget.addItems([
+            "Appetizer", "Beverage", "Breakfast", "Bread", "Dessert", "Dinner", "Drink", "Fingerfood", "Lunch",
+            "Main Course", "Marinade", "Salad", "Sauce", "Side", "Snack", "Soup"
+        ])
+
+        # Create a QWidgetAction to hold the QListWidget
+        action = QtWidgets.QWidgetAction(self)
+        action.setDefaultWidget(self.list_widget)
+        self.menu().addAction(action)
+
+        # Create buttons for quick actions
+        self.all_button = QtWidgets.QPushButton("All")
+        self.meals_button = QtWidgets.QPushButton("Meals")
+        self.clear_button = QtWidgets.QPushButton("Clear")
+
+        # Add buttons to a layout
+        button_layout = QtWidgets.QHBoxLayout()
+        button_layout.addWidget(self.all_button)
+        button_layout.addWidget(self.meals_button)
+        button_layout.addWidget(self.clear_button)
+
+        # Add button layout to a widget
+        button_widget = QtWidgets.QWidget()
+        button_widget.setLayout(button_layout)
+
+        # Add layout to a QWidgetAction
+        button_action = QtWidgets.QWidgetAction(self)
+        button_action.setDefaultWidget(button_widget)
+        self.menu().addAction(button_action)
+
+        # Connect buttons to functions
+        self.all_button.clicked.connect(self.select_all)
+        self.meals_button.clicked.connect(self.select_meals)
+        self.clear_button.clicked.connect(self.list_widget.clearSelection)
+
+    def select_all(self):
+        for index in range(self.list_widget.count()):
+            item = self.list_widget.item(index)
+            item.setSelected(True)
+
+    def select_meals(self):
+        # Select main course, side dish, appetizer, breakfast, appetizer, salad, soup
+        for index in range(self.list_widget.count()):
+            item = self.list_widget.item(index)
+            text = item.text()
+            if text in ["Appetizer", "Breakfast", "Main Course", "Salad", "Side", "Soup"]:
+                item.setSelected(True)
+            else:
+                item.setSelected(False)
+
+    def selected_items(self):
+        # Set to lowercase
+        return [item.text().lower() for item in self.list_widget.selectedItems()]
+
+
+class StackedWidget(QtWidgets.QStackedWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.currentChanged.connect(self.update_size)
+
+    def sizeHint(self):
+        current_widget = self.currentWidget()
+        if current_widget:
+            return current_widget.sizeHint()
+        return super().sizeHint()
+
+    def minimumSizeHint(self):
+        current_widget = self.currentWidget()
+        if current_widget:
+            return current_widget.minimumSizeHint()
+        return super().minimumSizeHint()
+
+    def update_size(self):
+        self.parentWidget().adjustSize()
+
+
 class MainWindow(QtWidgets.QMainWindow):
+    # Constants
+    MIN_SIZE = (300, 225)
+
     def __init__(self):
         super().__init__()
 
@@ -19,7 +105,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.api_key = os.getenv('API_KEY', 'API Key not set')
 
         # Create stacked widget (holds multiple pages)
-        self.stacked_widget = QtWidgets.QStackedWidget()
+        self.stacked_widget = StackedWidget()
         self.setCentralWidget(self.stacked_widget)
 
         # Create the pages
@@ -31,6 +117,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stacked_widget.addWidget(self.menu_page)
         self.stacked_widget.addWidget(self.search_page)
         self.stacked_widget.addWidget(self.settings_page)
+
+        # Set initial page to menu page
+        self.show_menu_page()
 
     def show_menu_page(self):
         self.stacked_widget.setCurrentWidget(self.menu_page)
@@ -93,11 +182,14 @@ class SearchPage(QtWidgets.QWidget):
         self.search_bar = QtWidgets.QLineEdit()
         self.search_button = QtWidgets.QPushButton("Search")
 
+        # Create filter dropdown
+        self.filter_dropdown = FilterDropdown()
+
         # Connect buttons
         self.back_button.clicked.connect(self.parent_window.show_menu_page)
         self.search_button.clicked.connect(self.search_recipes)
 
-        # Temp label to display ingredients after search
+        # Label to display ingredients after search
         self.results_label = QtWidgets.QLabel()
         self.results_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
         self.results_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextBrowserInteraction)
@@ -106,6 +198,7 @@ class SearchPage(QtWidgets.QWidget):
 
         # Add widgets to layout
         layout.addWidget(self.search_bar)
+        layout.addWidget(self.filter_dropdown)
         layout.addWidget(self.search_button)
         layout.addWidget(self.results_label)
         layout.addWidget(self.back_button)
@@ -114,9 +207,6 @@ class SearchPage(QtWidgets.QWidget):
         self.setLayout(layout)
 
     def search_recipes(self):
-        # Clear the results label before updating it
-        self.results_label.setText("")
-
         # Update results label to pending
         self.results_label.setText("Searching...")
 
@@ -129,45 +219,95 @@ class SearchPage(QtWidgets.QWidget):
         ingredients = ','.join(ingredients)
 
         # Format API request
-        url = "https://spoonacular-recipe-food-nutrition-v1.p.rapidapi.com/recipes/findByIngredients"
+        recipes_url = "https://spoonacular-recipe-food-nutrition-v1.p.rapidapi.com/recipes/findByIngredients"
         querystring = {"ingredients": ingredients, "number": "5", "ignorePantry": "true", "ranking": "1"}
         headers = {
             "x-rapidapi-key": self.parent_window.api_key,
             "x-rapidapi-host": "spoonacular-recipe-food-nutrition-v1.p.rapidapi.com"
         }
 
-        # Make and get API request
-        response = req.request("GET", url, headers=headers, params=querystring)
+        # Add selected type filters to the querystring
+        filters = self.filter_dropdown.selected_items()
+        if filters:
+            querystring['type'] = ','.join(filters)
 
-        if response.status_code == 200:
-            recipes = response.json()
-            recipe_names = [recipe['title'] for recipe in recipes]
+        # POST recipes search request
+        recipes_response = req.request("GET", recipes_url, headers=headers, params=querystring)
+
+        # If request successful, get and show recipes' info
+        if recipes_response.status_code == 200:
+            # Clean recipes data
+            recipes = recipes_response.json()
             recipe_ids = [recipe['id'] for recipe in recipes]
 
-            # Rate limit adherence
-            time.sleep(1)
+            # POST recipes' info request
+            info_bulk_url = "https://spoonacular-recipe-food-nutrition-v1.p.rapidapi.com/recipes/informationBulk"
+            info_bulk_querystring = {"ids": ",".join(map(str, recipe_ids)), "includeNutrition": "true"}
+            info_bulk_response = req.request("GET", info_bulk_url, headers=headers, params=info_bulk_querystring)
 
-            # Get recipe links
-            recipe_links = []
-            for recipe_id in recipe_ids:
-                time.sleep(0.5)
-                recipe_info_url = (f"https://spoonacular-recipe-food-nutrition-v1.p.rapidapi.com"
-                                   f"/recipes/{recipe_id}/information")
-                recipe_info_response = req.request("GET", recipe_info_url, headers=headers)
-                if recipe_info_response.status_code == 200:
-                    recipe_info = recipe_info_response.json()
-                    recipe_links.append(recipe_info.get('sourceUrl', ''))
+            # If request successful, get and show recipes' info
+            if info_bulk_response.status_code == 200:
+                recipes_info = info_bulk_response.json()
+                self.update_results_label(recipes_info)
 
-            # Display recipe names and links
-            recipes_display = "<br>".join(
-                [f"<a href='{link}'>{name}</a>" if link else name for name, link in zip(recipe_names, recipe_links)]
-            )
-            self.update_results_label(f"Recipes found:<br>{recipes_display}")
+                print(recipes)
+                print()
+                print(recipes_info)
+                print("\n")
+            # Else, show error message
+            else:
+                self.update_results_label("Error: Unable to retrieve recipes' info.")
+        # Else, show error message
         else:
             self.update_results_label("Error: Unable to retrieve recipes.")
 
-    def update_results_label(self, text):
-        self.results_label.setText(text)
+    # Update results label with recipe cards using recipe info from API
+    def update_results_label(self, recipes_info):
+        # If the recipes_info is a string, then it's an error message
+        if isinstance(recipes_info, str):
+            self.results_label.setText(recipes_info)
+            return
+
+        cards_html = ""
+
+        # Create card for each recipe
+        for recipe in recipes_info:
+            # Extract basic recipe info
+            name = recipe.get('title', 'No title')
+            source = recipe.get('sourceName', 'No source')
+            ready_in_minutes = recipe.get('readyInMinutes', 'Unknown ready time')
+            servings = recipe.get('servings', 'Unknown servings')
+            url = recipe.get('sourceUrl', '#')
+
+            # Extract from nutrition info to get calories, fat, carbs, and protein
+            nutrition_info = {nutrient['name']: nutrient['amount'] for nutrient in
+                              recipe.get('nutrition', {}).get('nutrients', [])}
+            calories = nutrition_info.get('Calories', '')
+            fat = nutrition_info.get('Fat', '')
+            carbs = nutrition_info.get('Carbohydrates', '')
+            protein = nutrition_info.get('Protein', '')
+
+            # Add g to the end of the values if they exist else make them a ?
+            calories = f"{calories}kcal" if calories else '?'
+            fat = f"{fat}g" if fat else '?'
+            carbs = f"{carbs}g" if carbs else '?'
+            protein = f"{protein}g" if protein else '?'
+
+            # Create card for recipe
+            card_html = f"""
+            <div style="border: 1px solid black; padding: 10px; margin: 10px;">
+                <h2>{name}</h2>
+                <p>Source: {source}</p>
+                <p>Ready in: {ready_in_minutes} minutes</p>
+                <p>Servings: {servings}</p>
+                <p>Nutrition: {calories}, {fat} fat, {carbs} carbs, {protein} protein</p>
+                <p><a href="{url}">Link to recipe</a></p>
+            </div>
+            """
+            cards_html += card_html
+
+        # Update results label with recipe cards
+        self.results_label.setText(cards_html)
 
 
 class SettingsPage(QtWidgets.QWidget):
