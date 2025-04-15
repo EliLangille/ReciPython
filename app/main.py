@@ -1,7 +1,6 @@
 import os
+import sqlite3
 import sys
-import threading
-import time
 import requests as req
 from dotenv import load_dotenv, set_key
 from PySide6 import QtWidgets, QtCore
@@ -26,14 +25,14 @@ class FilterDropdown(QtWidgets.QPushButton):
         self.menu().addAction(action)
 
         # Create buttons for quick actions
-        self.all_button = QtWidgets.QPushButton("All")
         self.meals_button = QtWidgets.QPushButton("Meals")
+        self.drinks_button = QtWidgets.QPushButton("Drinks")
         self.clear_button = QtWidgets.QPushButton("Clear")
 
         # Add buttons to a layout
         button_layout = QtWidgets.QHBoxLayout()
-        button_layout.addWidget(self.all_button)
         button_layout.addWidget(self.meals_button)
+        button_layout.addWidget(self.drinks_button)
         button_layout.addWidget(self.clear_button)
 
         # Add button layout to a widget
@@ -46,21 +45,26 @@ class FilterDropdown(QtWidgets.QPushButton):
         self.menu().addAction(button_action)
 
         # Connect buttons to functions
-        self.all_button.clicked.connect(self.select_all)
         self.meals_button.clicked.connect(self.select_meals)
+        self.drinks_button.clicked.connect(self.select_drinks)
         self.clear_button.clicked.connect(self.list_widget.clearSelection)
 
-    def select_all(self):
-        for index in range(self.list_widget.count()):
-            item = self.list_widget.item(index)
-            item.setSelected(True)
-
     def select_meals(self):
-        # Select main course, side dish, appetizer, breakfast, appetizer, salad, soup
+        # Select meal-related filters
         for index in range(self.list_widget.count()):
             item = self.list_widget.item(index)
             text = item.text()
-            if text in ["Appetizer", "Breakfast", "Main Course", "Salad", "Side", "Soup"]:
+            if text in ["Appetizer", "Breakfast", "Dinner", "Lunch", "Main Course", "Salad", "Soup"]:
+                item.setSelected(True)
+            else:
+                item.setSelected(False)
+
+    def select_drinks(self):
+        # Select drink-related filters
+        for index in range(self.list_widget.count()):
+            item = self.list_widget.item(index)
+            text = item.text()
+            if text in ["Beverage", "Drink"]:
                 item.setSelected(True)
             else:
                 item.setSelected(False)
@@ -104,6 +108,10 @@ class MainWindow(QtWidgets.QMainWindow):
         load_dotenv()
         self.api_key = os.getenv('API_KEY', 'API Key not set')
 
+        # Initialize recipes database
+        self.conn = sqlite3.connect('recipython.db')
+        self.init_database()
+
         # Create stacked widget (holds multiple pages)
         self.stacked_widget = StackedWidget()
         self.setCentralWidget(self.stacked_widget)
@@ -120,6 +128,44 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Set initial page to menu page
         self.show_menu_page()
+
+    def init_database(self):
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS favourites (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT,
+                    source TEXT,
+                    ready_in_minutes TEXT,
+                    servings TEXT,
+                    calories TEXT,
+                    fat TEXT,
+                    carbs TEXT,
+                    protein TEXT,
+                    url TEXT
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS search_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ingredients TEXT,
+                    filters TEXT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            self.conn.commit()
+            print("Database tables created successfully.")
+        except sqlite3.Error as e:
+            print(f"Error creating database tables: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "Failed to create database tables.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "An unexpected error occurred.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
 
     def show_menu_page(self):
         self.stacked_widget.setCurrentWidget(self.menu_page)
@@ -145,19 +191,21 @@ class MenuPage(QtWidgets.QWidget):
 
         # Create buttons
         self.search_button = QtWidgets.QPushButton("Search")
-        self.ingredients_button = QtWidgets.QPushButton("My Ingredients")
+        self.history_button = QtWidgets.QPushButton("History")
         self.favourites_button = QtWidgets.QPushButton("Favourites")
         self.settings_button = QtWidgets.QPushButton("Settings")
         self.exit_button = QtWidgets.QPushButton("Exit")
 
         # Connect the buttons to the functions
         self.search_button.clicked.connect(self.parent_window.show_search_page)
+        # self.history_button.clicked.connect(self.parent_window.show_history_page)
+        # self.favourites_button.clicked.connect(self.parent_window.show_favourites_page)
         self.settings_button.clicked.connect(self.parent_window.show_settings_page)
         self.exit_button.clicked.connect(QtWidgets.QApplication.instance().quit)
 
         # Add buttons to layout
         layout.addWidget(self.search_button)
-        layout.addWidget(self.ingredients_button)
+        layout.addWidget(self.history_button)
         layout.addWidget(self.favourites_button)
         layout.addWidget(self.settings_button)
         layout.addWidget(self.exit_button)
@@ -196,11 +244,19 @@ class SearchPage(QtWidgets.QWidget):
         self.results_label.setOpenExternalLinks(True)
         self.results_label.setText("")  # Initialize with empty content
 
+        # Create widget for recipe cards
+        self.cards_container = QtWidgets.QWidget()
+        self.cards_layout = QtWidgets.QVBoxLayout(self.cards_container)
+        self.cards_container.setLayout(self.cards_layout)
+        self.cards_container.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                                           QtWidgets.QSizePolicy.Policy.Minimum)
+
         # Add widgets to layout
         layout.addWidget(self.search_bar)
         layout.addWidget(self.filter_dropdown)
         layout.addWidget(self.search_button)
         layout.addWidget(self.results_label)
+        layout.addWidget(self.cards_container)
         layout.addWidget(self.back_button)
 
         # Set layout
@@ -210,13 +266,12 @@ class SearchPage(QtWidgets.QWidget):
         # Update results label to pending
         self.results_label.setText("Searching...")
 
-        # Start a new thread to perform the API requests
-        threading.Thread(target=self.perform_search).start()
-
-    def perform_search(self):
         # Get and clean ingredients list from search bar
         ingredients = [ingredient.strip() for ingredient in self.search_bar.text().split(',')]
         ingredients = ','.join(ingredients)
+
+        # Store search data for history
+        search_data = {'ingredients': ingredients}
 
         # Format API request
         recipes_url = "https://spoonacular-recipe-food-nutrition-v1.p.rapidapi.com/recipes/findByIngredients"
@@ -226,10 +281,16 @@ class SearchPage(QtWidgets.QWidget):
             "x-rapidapi-host": "spoonacular-recipe-food-nutrition-v1.p.rapidapi.com"
         }
 
-        # Add selected type filters to the querystring
+        # Add filters to query string and search history entry
         filters = self.filter_dropdown.selected_items()
         if filters:
             querystring['type'] = ','.join(filters)
+            search_data['filters'] = filters
+        else:
+            search_data['filters'] = []
+
+        # Save search data to database
+        self.save_search_data(search_data)
 
         # POST recipes search request
         recipes_response = req.request("GET", recipes_url, headers=headers, params=querystring)
@@ -248,7 +309,7 @@ class SearchPage(QtWidgets.QWidget):
             # If request successful, get and show recipes' info
             if info_bulk_response.status_code == 200:
                 recipes_info = info_bulk_response.json()
-                self.update_results_label(recipes_info)
+                self.update_results(recipes_info)
 
                 print(recipes)
                 print()
@@ -256,21 +317,25 @@ class SearchPage(QtWidgets.QWidget):
                 print("\n")
             # Else, show error message
             else:
-                self.update_results_label("Error: Unable to retrieve recipes' info.")
+                self.results_label.setText("Error: Unable to retrieve recipes' info.")
+                print(f"Error: {info_bulk_response.status_code} - {info_bulk_response.text}")
         # Else, show error message
         else:
-            self.update_results_label("Error: Unable to retrieve recipes.")
+            self.results_label.setText("Error: Unable to retrieve recipes.")
+            print(f"Error: {recipes_response.status_code} - {recipes_response.text}")
 
     # Update results label with recipe cards using recipe info from API
-    def update_results_label(self, recipes_info):
-        # If the recipes_info is a string, then it's an error message
-        if isinstance(recipes_info, str):
-            self.results_label.setText(recipes_info)
-            return
+    def update_results(self, recipes_info):
+        # Clear results label
+        self.results_label.setText("")
 
-        cards_html = ""
+        # Clear existing cards
+        for i in reversed(range(self.cards_layout.count())):
+            widget = self.cards_layout.itemAt(i).widget()
+            if widget:
+                widget.deleteLater()
 
-        # Create card for each recipe
+        # Add new card for each recipe
         for recipe in recipes_info:
             # Extract basic recipe info
             name = recipe.get('title', 'No title')
@@ -293,21 +358,126 @@ class SearchPage(QtWidgets.QWidget):
             carbs = f"{carbs}g" if carbs else '?'
             protein = f"{protein}g" if protein else '?'
 
-            # Create card for recipe
-            card_html = f"""
-            <div style="border: 1px solid black; padding: 10px; margin: 10px;">
-                <h2>{name}</h2>
-                <p>Source: {source}</p>
-                <p>Ready in: {ready_in_minutes} minutes</p>
-                <p>Servings: {servings}</p>
-                <p>Nutrition: {calories}, {fat} fat, {carbs} carbs, {protein} protein</p>
-                <p><a href="{url}">Link to recipe</a></p>
-            </div>
-            """
-            cards_html += card_html
+            # Create a dictionary to hold recipe data for adding to favourites if needed
+            recipe_data = {
+                'name': name,
+                'source': source,
+                'ready_in_minutes': ready_in_minutes,
+                'servings': servings,
+                'calories': calories,
+                'fat': fat,
+                'carbs': carbs,
+                'protein': protein,
+                'url': url
+            }
 
-        # Update results label with recipe cards
-        self.results_label.setText(cards_html)
+            # Create card for recipe
+            card = QtWidgets.QWidget()
+            card_layout = QtWidgets.QVBoxLayout(card)
+
+            # Add recipe details
+            card_layout.addWidget(QtWidgets.QLabel(f"<b>{name}</b>"))
+            card_layout.addWidget(QtWidgets.QLabel(f"Source: {source}"))
+            card_layout.addWidget(QtWidgets.QLabel(f"Ready in: {ready_in_minutes} minutes"))
+            card_layout.addWidget(QtWidgets.QLabel(f"Servings: {servings}"))
+            card_layout.addWidget(QtWidgets.QLabel(f"Nutrition: {calories}, {fat} fat, {carbs} carbs, "
+                                                   f"{protein} protein"))
+            link_label = QtWidgets.QLabel(f'<a href="{url}">View Recipe</a>')
+            link_label.setOpenExternalLinks(True)
+            card_layout.addWidget(link_label)
+
+            # Add button to add to favourites
+            add_fav_button = QtWidgets.QPushButton("Add to Favourites")
+            add_fav_button.clicked.connect(lambda _, r=recipe_data: self.add_to_favourites(r))
+            card_layout.addWidget(add_fav_button)
+
+            # Add card to cards layout
+            self.cards_layout.addWidget(card)
+
+    def save_search_data(self, search_data):
+        try:
+            cursor = self.parent_window.conn.cursor()
+
+            # Insert search data into the database
+            cursor.execute("""
+                INSERT INTO search_history (ingredients, filters)
+                VALUES (?, ?)
+            """, (search_data['ingredients'], ','.join(search_data['filters'])))
+
+            # Delete older entries to limit search history to 20
+            cursor.execute("""
+                DELETE FROM search_history
+                WHERE id NOT IN (
+                    SELECT id FROM search_history
+                    ORDER BY timestamp DESC
+                    LIMIT 20
+                )
+            """)
+
+            # Commit the changes
+            self.parent_window.conn.commit()
+        except sqlite3.Error as e:
+            print(f"Error saving search data: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "Failed to save search data.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "An unexpected error occurred.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
+
+    def add_to_favourites(self, recipe_data):
+        try:
+            cursor = self.parent_window.conn.cursor()
+
+            # Check if the recipe already exists in the favourites table
+            cursor.execute("""
+                SELECT * FROM favourites 
+                WHERE name = ? AND source = ? AND url = ?
+            """, (
+                recipe_data['name'],
+                recipe_data['source'],
+                recipe_data['url']
+            ))
+
+            # If match found, show error message and return
+            if cursor.fetchone():
+                QtWidgets.QMessageBox.warning(self, "Error", "Recipe already in favourites.",
+                                              QtWidgets.QMessageBox.StandardButton.Ok)
+                return
+
+            # Save the recipe data to the database
+            cursor.execute("""
+                INSERT INTO favourites (name, source, ready_in_minutes, servings, calories, fat, carbs, protein, 
+                url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                recipe_data['name'],
+                recipe_data['source'],
+                recipe_data['ready_in_minutes'],
+                recipe_data['servings'],
+                recipe_data['calories'],
+                recipe_data['fat'],
+                recipe_data['carbs'],
+                recipe_data['protein'],
+                recipe_data['url']
+            ))
+            self.parent_window.conn.commit()
+        except sqlite3.Error as e:
+            print(f"Error saving recipe to favourites: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "Failed to save recipe to favourites.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "An unexpected error occurred.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
+
+        # Show success message
+        QtWidgets.QMessageBox.information(self, "Favourites", "Recipe added to favourites.",
+                                          QtWidgets.QMessageBox.StandardButton.Ok)
 
 
 class SettingsPage(QtWidgets.QWidget):
