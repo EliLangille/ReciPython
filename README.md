@@ -1,5 +1,11 @@
 # ReciPython
-A capstone project for NSCC to build a recipe generator for at-home ingredients
+A capstone project for NSCC to build a recipe search engine with an interactive GUI.
 
 ## Setup
-It is recommended to set this project up in a venv with up-to-date pip and PySide6
+To run this project, you will need to set up a virtual environment with:
+- Python 3.9+
+- pip
+- PySide6
+- dotenv
+
+Alternatively, you can run your OS's setup_and_run script (.bat for Windows, .sh for macOS/Linux) to take care of this and start running the app.

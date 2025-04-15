@@ -174,4 +174,4 @@ cython_debug/
 .DS_Store
 
 # User-specific files
-App/recipython.db
+*.db
