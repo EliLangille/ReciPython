@@ -9,6 +9,7 @@ from PySide6 import QtWidgets
 MIN_CARD_HEIGHT = 250
 MIN_CARD_WIDTH = 425
 
+
 class FilterDropdown(QtWidgets.QPushButton):
     def __init__(self, parent=None):
         super().__init__("Filters", parent)
@@ -119,12 +120,14 @@ class MainWindow(QtWidgets.QMainWindow):
         # Create the pages
         self.menu_page = MenuPage(self)
         self.search_page = SearchPage(self)
+        self.history_page = HistoryPage(self)
         self.favourites_page = FavouritesPage(self)
         self.settings_page = SettingsPage(self)
 
         # Add pages to stacked widget
         self.stacked_widget.addWidget(self.menu_page)
         self.stacked_widget.addWidget(self.search_page)
+        self.stacked_widget.addWidget(self.history_page)
         self.stacked_widget.addWidget(self.favourites_page)
         self.stacked_widget.addWidget(self.settings_page)
 
@@ -175,10 +178,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def show_search_page(self):
         self.stacked_widget.setCurrentWidget(self.search_page)
 
-    # def show_history_page(self):
-    #     self.stacked_widget.setCurrentWidget(self.history_page)
+    def show_history_page(self):
+        self.history_page.load_search_history()
+        self.stacked_widget.setCurrentWidget(self.history_page)
 
     def show_favourites_page(self):
+        self.favourites_page.load_favourites()
         self.stacked_widget.setCurrentWidget(self.favourites_page)
 
     def show_settings_page(self):
@@ -206,9 +211,8 @@ class MenuPage(QtWidgets.QWidget):
 
         # Connect the buttons to the functions
         self.search_button.clicked.connect(self.parent_window.show_search_page)
-        # self.history_button.clicked.connect(self.parent_window.show_history_page)
-        self.favourites_button.clicked.connect(lambda: (self.parent_window.favourites_page.load_favourites(),
-                                                        self.parent_window.show_favourites_page()))
+        self.history_button.clicked.connect(self.parent_window.show_history_page)
+        self.favourites_button.clicked.connect(self.parent_window.show_favourites_page)
         self.settings_button.clicked.connect(self.parent_window.show_settings_page)
         self.exit_button.clicked.connect(QtWidgets.QApplication.instance().quit)
 
@@ -318,11 +322,6 @@ class SearchPage(QtWidgets.QWidget):
             if info_bulk_response.status_code == 200:
                 recipes_info = info_bulk_response.json()
                 self.update_results(recipes_info)
-
-                print(recipes)
-                print()
-                print(recipes_info)
-                print("\n")
             # Else, show error message
             else:
                 self.status_label.setText("Error: Unable to retrieve recipes' info.")
@@ -488,6 +487,130 @@ class SearchPage(QtWidgets.QWidget):
                                           QtWidgets.QMessageBox.StandardButton.Ok)
 
 
+class HistoryPage(QtWidgets.QWidget):
+    def __init__(self, parent_window):
+        super().__init__()
+
+        self.parent_window = parent_window
+
+        # Create layout
+        layout = QtWidgets.QVBoxLayout()
+
+        # Create back button
+        self.back_button = QtWidgets.QPushButton("Back")
+        self.back_button.clicked.connect(self.parent_window.show_menu_page)
+
+        # Create scroll area for history
+        self.scroll_area = QtWidgets.QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setMinimumHeight(MIN_CARD_HEIGHT)
+        self.scroll_content = QtWidgets.QWidget()
+        self.scroll_layout = QtWidgets.QVBoxLayout(self.scroll_content)
+        self.scroll_area.setWidget(self.scroll_content)
+
+        # Add widgets to layout
+        layout.addWidget(self.scroll_area)
+        layout.addWidget(self.back_button)
+
+        # Set layout
+        self.setLayout(layout)
+
+        # Load search history from database
+        self.load_search_history()
+
+    def load_search_history(self):
+        # Clear existing cards
+        for i in reversed(range(self.scroll_layout.count())):
+            widget = self.scroll_layout.itemAt(i).widget()
+            if widget:
+                widget.deleteLater()
+
+        # Fetch search history from the database
+        try:
+            cursor = self.parent_window.conn.cursor()
+            cursor.execute("SELECT * FROM search_history ORDER BY timestamp DESC")  # Order by newest
+            history = cursor.fetchall()
+
+            for entry in history:
+                ingredients, filters, timestamp = entry[1:]
+
+                # Create a card for each search history entry
+                entry_widget = QtWidgets.QWidget()
+                history_layout = QtWidgets.QVBoxLayout(entry_widget)
+
+                # Add search details
+                history_layout.addWidget(QtWidgets.QLabel(f"<b>Ingredients:</b> {ingredients}"))
+                history_layout.addWidget(QtWidgets.QLabel(f"<b>Filters:</b> {filters}"))
+                history_layout.addWidget(QtWidgets.QLabel(f"<b>Timestamp:</b> {timestamp}"))
+
+                # Add buttons
+                search_button = QtWidgets.QPushButton("Search")
+                delete_button = QtWidgets.QPushButton("Delete")
+
+                # Connect buttons
+                search_button.clicked.connect(lambda _, ing=ingredients, fil=filters: self.retrieve_search(ing, fil))
+                delete_button.clicked.connect(lambda _, ing=entry: self.delete_search(ing))
+
+                # Add buttons to layout (attached to side of history entry)
+                button_layout = QtWidgets.QHBoxLayout()
+                button_layout.addWidget(search_button)
+                button_layout.addWidget(delete_button)
+                history_layout.addLayout(button_layout)
+
+                # Add card to scroll layout
+                self.scroll_layout.addWidget(entry_widget)
+        except sqlite3.Error as e:
+            print(f"Error loading search history: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "Failed to load search history.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "An unexpected error occurred.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
+
+    def retrieve_search(self, ingredients, filters):
+        # Set the search bar text and selected filters
+        self.parent_window.search_page.search_bar.setText(ingredients)
+        for i in range(self.parent_window.search_page.filter_dropdown.list_widget.count()):
+            item = self.parent_window.search_page.filter_dropdown.list_widget.item(i)
+            if item.text() in filters.split(','):
+                item.setSelected(True)
+            else:
+                item.setSelected(False)
+
+        # Execute the search
+        self.parent_window.search_page.search_recipes()
+
+        # Show search page
+        self.parent_window.show_search_page()
+
+    def delete_search(self, entry):
+        try:
+            cursor = self.parent_window.conn.cursor()
+
+            # Delete the entry from the database
+            cursor.execute("""
+                DELETE FROM search_history 
+                WHERE id = ?
+            """, (entry[0],))
+            self.parent_window.conn.commit()
+        except sqlite3.Error as e:
+            print(f"Error deleting search history entry: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "Failed to delete search history entry.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "An unexpected error occurred.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
+
+        # Reload search history
+        self.load_search_history()
+
+
 class FavouritesPage(QtWidgets.QWidget):
     def __init__(self, parent_window):
         super().__init__()
@@ -530,11 +653,10 @@ class FavouritesPage(QtWidgets.QWidget):
         # Fetch favourites from the database
         try:
             cursor = self.parent_window.conn.cursor()
-            cursor.execute("SELECT * FROM favourites")
+            cursor.execute("SELECT * FROM favourites ORDER BY id DESC")
             favourites = cursor.fetchall()
 
             for recipe in favourites:
-                print(recipe)
                 name, source, ready_in_minutes, servings, calories, fat, carbs, protein, url = recipe[1:]
 
                 # Create a card for each favourite recipe
@@ -598,6 +720,7 @@ class FavouritesPage(QtWidgets.QWidget):
         # Reload favourites
         self.load_favourites()
 
+
 class SettingsPage(QtWidgets.QWidget):
     def __init__(self, parent_window):
         super().__init__()
@@ -612,18 +735,18 @@ class SettingsPage(QtWidgets.QWidget):
         self.api_key_input = QtWidgets.QLineEdit()
 
         # Create buttons
-        self.back_button = QtWidgets.QPushButton("Back")
         self.save_button = QtWidgets.QPushButton("Save")
+        self.back_button = QtWidgets.QPushButton("Back")
 
         # Connect buttons
-        self.back_button.clicked.connect(self.parent_window.show_menu_page)
         self.save_button.clicked.connect(self.save_settings)
+        self.back_button.clicked.connect(self.parent_window.show_menu_page)
 
         # Add widgets to layout
         layout.addWidget(self.api_key_label)
         layout.addWidget(self.api_key_input)
-        layout.addWidget(self.back_button)
         layout.addWidget(self.save_button)
+        layout.addWidget(self.back_button)
 
         # Set layout
         self.setLayout(layout)
