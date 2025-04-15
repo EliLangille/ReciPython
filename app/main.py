@@ -3,8 +3,11 @@ import sqlite3
 import sys
 import requests as req
 from dotenv import load_dotenv, set_key
-from PySide6 import QtWidgets, QtCore
+from PySide6 import QtWidgets
 
+# Constants
+MIN_CARD_HEIGHT = 250
+MIN_CARD_WIDTH = 425
 
 class FilterDropdown(QtWidgets.QPushButton):
     def __init__(self, parent=None):
@@ -96,9 +99,6 @@ class StackedWidget(QtWidgets.QStackedWidget):
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    # Constants
-    MIN_SIZE = (300, 225)
-
     def __init__(self):
         super().__init__()
 
@@ -119,11 +119,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # Create the pages
         self.menu_page = MenuPage(self)
         self.search_page = SearchPage(self)
+        self.favourites_page = FavouritesPage(self)
         self.settings_page = SettingsPage(self)
 
         # Add pages to stacked widget
         self.stacked_widget.addWidget(self.menu_page)
         self.stacked_widget.addWidget(self.search_page)
+        self.stacked_widget.addWidget(self.favourites_page)
         self.stacked_widget.addWidget(self.settings_page)
 
         # Set initial page to menu page
@@ -173,6 +175,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def show_search_page(self):
         self.stacked_widget.setCurrentWidget(self.search_page)
 
+    # def show_history_page(self):
+    #     self.stacked_widget.setCurrentWidget(self.history_page)
+
+    def show_favourites_page(self):
+        self.stacked_widget.setCurrentWidget(self.favourites_page)
+
     def show_settings_page(self):
         self.stacked_widget.setCurrentWidget(self.settings_page)
 
@@ -199,7 +207,8 @@ class MenuPage(QtWidgets.QWidget):
         # Connect the buttons to the functions
         self.search_button.clicked.connect(self.parent_window.show_search_page)
         # self.history_button.clicked.connect(self.parent_window.show_history_page)
-        # self.favourites_button.clicked.connect(self.parent_window.show_favourites_page)
+        self.favourites_button.clicked.connect(lambda: (self.parent_window.favourites_page.load_favourites(),
+                                                        self.parent_window.show_favourites_page()))
         self.settings_button.clicked.connect(self.parent_window.show_settings_page)
         self.exit_button.clicked.connect(QtWidgets.QApplication.instance().quit)
 
@@ -237,26 +246,25 @@ class SearchPage(QtWidgets.QWidget):
         self.back_button.clicked.connect(self.parent_window.show_menu_page)
         self.search_button.clicked.connect(self.search_recipes)
 
-        # Label to display ingredients after search
-        self.results_label = QtWidgets.QLabel()
-        self.results_label.setTextFormat(QtCore.Qt.TextFormat.RichText)
-        self.results_label.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextBrowserInteraction)
-        self.results_label.setOpenExternalLinks(True)
-        self.results_label.setText("")  # Initialize with empty content
+        # Label to display search status or errors
+        self.status_label = QtWidgets.QLabel()
+        self.status_label.setText("")
 
-        # Create widget for recipe cards
-        self.cards_container = QtWidgets.QWidget()
-        self.cards_layout = QtWidgets.QVBoxLayout(self.cards_container)
-        self.cards_container.setLayout(self.cards_layout)
-        self.cards_container.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
-                                           QtWidgets.QSizePolicy.Policy.Minimum)
+        # Create scroll area for recipe cards
+        self.scroll_area = QtWidgets.QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setMinimumHeight(MIN_CARD_HEIGHT)
+        self.scroll_area.setMinimumWidth(MIN_CARD_WIDTH)
+        self.scroll_content = QtWidgets.QWidget()
+        self.scroll_layout = QtWidgets.QVBoxLayout(self.scroll_content)
+        self.scroll_area.setWidget(self.scroll_content)
 
         # Add widgets to layout
         layout.addWidget(self.search_bar)
         layout.addWidget(self.filter_dropdown)
         layout.addWidget(self.search_button)
-        layout.addWidget(self.results_label)
-        layout.addWidget(self.cards_container)
+        layout.addWidget(self.status_label)
+        layout.addWidget(self.scroll_area)
         layout.addWidget(self.back_button)
 
         # Set layout
@@ -264,7 +272,7 @@ class SearchPage(QtWidgets.QWidget):
 
     def search_recipes(self):
         # Update results label to pending
-        self.results_label.setText("Searching...")
+        self.status_label.setText("Searching...")
 
         # Get and clean ingredients list from search bar
         ingredients = [ingredient.strip() for ingredient in self.search_bar.text().split(',')]
@@ -317,21 +325,21 @@ class SearchPage(QtWidgets.QWidget):
                 print("\n")
             # Else, show error message
             else:
-                self.results_label.setText("Error: Unable to retrieve recipes' info.")
+                self.status_label.setText("Error: Unable to retrieve recipes' info.")
                 print(f"Error: {info_bulk_response.status_code} - {info_bulk_response.text}")
         # Else, show error message
         else:
-            self.results_label.setText("Error: Unable to retrieve recipes.")
+            self.status_label.setText("Error: Unable to retrieve recipes.")
             print(f"Error: {recipes_response.status_code} - {recipes_response.text}")
 
     # Update results label with recipe cards using recipe info from API
     def update_results(self, recipes_info):
         # Clear results label
-        self.results_label.setText("")
+        self.status_label.setText("")
 
         # Clear existing cards
-        for i in reversed(range(self.cards_layout.count())):
-            widget = self.cards_layout.itemAt(i).widget()
+        for i in reversed(range(self.scroll_layout.count())):
+            widget = self.scroll_layout.itemAt(i).widget()
             if widget:
                 widget.deleteLater()
 
@@ -392,7 +400,7 @@ class SearchPage(QtWidgets.QWidget):
             card_layout.addWidget(add_fav_button)
 
             # Add card to cards layout
-            self.cards_layout.addWidget(card)
+            self.scroll_layout.addWidget(card)
 
     def save_search_data(self, search_data):
         try:
@@ -479,6 +487,116 @@ class SearchPage(QtWidgets.QWidget):
         QtWidgets.QMessageBox.information(self, "Favourites", "Recipe added to favourites.",
                                           QtWidgets.QMessageBox.StandardButton.Ok)
 
+
+class FavouritesPage(QtWidgets.QWidget):
+    def __init__(self, parent_window):
+        super().__init__()
+
+        self.parent_window = parent_window
+
+        # Create layout
+        layout = QtWidgets.QVBoxLayout()
+
+        # Create back button
+        self.back_button = QtWidgets.QPushButton("Back")
+        self.back_button.clicked.connect(self.parent_window.show_menu_page)
+
+        # Create scroll area for favourites
+        self.scroll_area = QtWidgets.QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setMinimumHeight(MIN_CARD_HEIGHT)
+        self.scroll_area.setMinimumWidth(MIN_CARD_WIDTH)
+        self.scroll_content = QtWidgets.QWidget()
+        self.scroll_layout = QtWidgets.QVBoxLayout(self.scroll_content)
+        self.scroll_area.setWidget(self.scroll_content)
+
+        # Add widgets to layout
+        layout.addWidget(self.scroll_area)
+        layout.addWidget(self.back_button)
+
+        # Set layout
+        self.setLayout(layout)
+
+        # Load favourites from database
+        self.load_favourites()
+
+    def load_favourites(self):
+        # Clear existing cards
+        for i in reversed(range(self.scroll_layout.count())):
+            widget = self.scroll_layout.itemAt(i).widget()
+            if widget:
+                widget.deleteLater()
+
+        # Fetch favourites from the database
+        try:
+            cursor = self.parent_window.conn.cursor()
+            cursor.execute("SELECT * FROM favourites")
+            favourites = cursor.fetchall()
+
+            for recipe in favourites:
+                print(recipe)
+                name, source, ready_in_minutes, servings, calories, fat, carbs, protein, url = recipe[1:]
+
+                # Create a card for each favourite recipe
+                card = QtWidgets.QWidget()
+                card_layout = QtWidgets.QVBoxLayout(card)
+
+                # Add recipe details
+                card_layout.addWidget(QtWidgets.QLabel(f"<b>{name}</b>"))
+                card_layout.addWidget(QtWidgets.QLabel(f"Source: {source}"))
+                card_layout.addWidget(QtWidgets.QLabel(f"Ready in: {ready_in_minutes} minutes"))
+                card_layout.addWidget(QtWidgets.QLabel(f"Servings: {servings}"))
+                card_layout.addWidget(QtWidgets.QLabel(f"Nutrition: {calories}, {fat} fat, {carbs} carbs, "
+                                                       f"{protein} protein"))
+                link_label = QtWidgets.QLabel(f'<a href="{url}">View Recipe</a>')
+                link_label.setOpenExternalLinks(True)
+                card_layout.addWidget(link_label)
+
+                # Add button to remove from favourites
+                remove_button = QtWidgets.QPushButton("Remove from Favourites")
+                remove_button.clicked.connect(lambda _, r=recipe: self.remove_from_favourites(r))
+                card_layout.addWidget(remove_button)
+
+                # Add card to scroll layout
+                self.scroll_layout.addWidget(card)
+        except sqlite3.Error as e:
+            print(f"Error loading favourites: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "Failed to load favourites.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "An unexpected error occurred.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
+
+    def remove_from_favourites(self, recipe):
+        try:
+            cursor = self.parent_window.conn.cursor()
+
+            # Remove the recipe from the database
+            cursor.execute("""
+                DELETE FROM favourites 
+                WHERE name = ? AND source = ? AND url = ?
+            """, (
+                recipe[1],
+                recipe[2],
+                recipe[9]
+            ))
+            self.parent_window.conn.commit()
+        except sqlite3.Error as e:
+            print(f"Error removing recipe from favourites: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "Failed to remove recipe from favourites.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            QtWidgets.QMessageBox.critical(self, "Error", "An unexpected error occurred.",
+                                           QtWidgets.QMessageBox.StandardButton.Ok)
+            return
+
+        # Reload favourites
+        self.load_favourites()
 
 class SettingsPage(QtWidgets.QWidget):
     def __init__(self, parent_window):
