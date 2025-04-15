@@ -172,3 +172,6 @@ cython_debug/
 
 # MacOS
 .DS_Store
+
+# User-specific files
+App/recipython.db
