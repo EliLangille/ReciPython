@@ -22,4 +22,4 @@ pip install -r requirements.txt
 
 # Run the app
 echo "Starting ReciPython..."
-python3 app/main.py
+python3 main.py
