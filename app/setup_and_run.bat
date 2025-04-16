@@ -23,5 +23,5 @@ pip install -r requirements.txt
 
 :: Run the app
 echo Starting ReciPython...
-python app/main.py
+python main.py
 pause
